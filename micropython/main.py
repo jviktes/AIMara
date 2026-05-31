@@ -1,21 +1,27 @@
 import neopixel, time, gc
 from machine import Pin
+from machine import ADC
 from umqtt.simple import MQTTClient
 import ubinascii, machine, network
 
-# ── WiFi ──────────────────────────────
-def connect_wifi(ssid, password):
-    wlan = network.WLAN(network.STA_IF)
-    wlan.active(True)
-    if not wlan.isconnected():
-        print('Connecting to WiFi...')
-        wlan.connect(ssid, password)
-        while not wlan.isconnected():
-            time.sleep(0.5)
-            print('.')
-    print('WiFi connected:', wlan.ifconfig()[0])
+# # ── WiFi ──────────────────────────────
+# def connect_wifi(ssid, password):
+#     wlan = network.WLAN(network.STA_IF)
+#     wlan.active(True)
+#     if not wlan.isconnected():
+#         print('Connecting to WiFi...')
+#         wlan.connect(ssid, password)
+#         while not wlan.isconnected():
+#             time.sleep(0.5)
+#             print('.')
+#     print('WiFi connected:', wlan.ifconfig()[0])
 
-connect_wifi('YOUR_SSID', 'YOUR_PASSWORD')
+# connect_wifi('YOUR_SSID', 'YOUR_PASSWORD')
+
+
+# Light sensor on GPIO 34
+ldr = ADC(Pin(34))
+ldr.atten(ADC.ATTN_11DB)   # full range 0–3.6V → 0–4095
 
 # ── LED config ────────────────────────
 NUM_LEDS     = 27
@@ -39,6 +45,8 @@ snake_pos     = -SNAKE_LENGTH
 # ── MQTT config ───────────────────────
 MQTT_BROKER = '192.168.0.136'
 MQTT_CLIENT = 'esp32-' + ubinascii.hexlify(machine.unique_id()).decode()
+
+#region LEDS
 
 TOPIC_STRIP = [
     b'home/leds/1',
@@ -91,6 +99,21 @@ def draw_snake(position):
                 strip[i] = (br, bg_b, bb)
         strip.write()
 
+#endregion
+
+#region Light sensor reading and MQTT publishing
+def read_light():
+    raw = ldr.read()
+    voltage = raw / 4095 * 3.6
+    client.publish("esp32/light", str(raw))
+    client.publish("esp32/light_voltage", "{:.2f}".format(voltage))
+    print("Light raw:", raw, "  voltage:", voltage)
+#endregion
+
+# def Measurement():
+#     # ... existing BMP280 + DHT code ...
+#     read_light()   # add this at the end
+
 # ── MQTT callback ─────────────────────
 def on_message(topic, msg):
     global snake_running, snake_speed, snake_color, bg_color
@@ -117,6 +140,11 @@ def on_message(topic, msg):
         except Exception as e:
             print("Single LED error:", e)
         return
+
+    #region Light sensor
+    elif topic_str == 'esp32/light/get':
+        read_light()
+    #endregion
 
     # ── Range control ──────────────────
     # Topic: home/leds/s1/range   payload: 0,10,255,0,0
@@ -205,6 +233,7 @@ def mqtt_connect():
     c.subscribe(b'home/leds/s3/+')
     c.subscribe(b'home/leds/s4/+')
     c.subscribe(b'home/leds/s5/+')
+    c.subscribe(b'esp32/light/get')
     print("MQTT connected as:", MQTT_CLIENT)
     return c
 
