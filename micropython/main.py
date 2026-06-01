@@ -23,6 +23,12 @@ import ubinascii, machine, network
 ldr = ADC(Pin(34))
 ldr.atten(ADC.ATTN_11DB)   # full range 0–3.6V → 0–4095
 
+
+#region PIR sensors — GPIO 32, 33
+pir1 = Pin(32, Pin.IN)
+pir2 = Pin(33, Pin.IN)
+#endregion
+
 # ── LED config ────────────────────────
 NUM_LEDS     = 27
 SNAKE_LENGTH = 5
@@ -41,6 +47,10 @@ snake_speed   = 30
 snake_color   = (0, 255, 0)    # GRB = red
 bg_color      = (200, 200, 200)
 snake_pos     = -SNAKE_LENGTH
+
+pir_debounce_ms = 500
+pir1_last = 0  # last known state of PIR1
+pir2_last = 0  # last known state of PIR2
 
 # ── MQTT config ───────────────────────
 MQTT_BROKER = '192.168.0.136'
@@ -108,6 +118,15 @@ def read_light():
     client.publish("esp32/light", str(raw))
     client.publish("esp32/light_voltage", "{:.2f}".format(voltage))
     print("Light raw:", raw, "  voltage:", voltage)
+#endregion
+
+#region PIR sensor reading and MQTT publishing
+def read_pir():
+    p1 = pir1.value()
+    p2 = pir2.value()
+    client.publish(b'esp32/pir/1', b'1' if p1 else b'0')
+    client.publish(b'esp32/pir/2', b'1' if p2 else b'0')
+    print("PIR1:", p1, " PIR2:", p2)
 #endregion
 
 # def Measurement():
@@ -274,6 +293,23 @@ while True:
             if snake_pos >= NUM_LEDS:
                 snake_pos = -SNAKE_LENGTH
             last_snake_move = now
+    
+    #region PIR — edge detection, publish only on change
+    p1 = pir1.value()
+    p2 = pir2.value()
+
+    if p1 != pir1_last:
+        pir1_last = p1
+        client.publish(b'esp32/pir/1', b'1' if p1 else b'0')
+        print("PIR1:", "motion start" if p1 else "motion end")
+        time.sleep_ms(pir_debounce_ms)
+
+    if p2 != pir2_last:
+        pir2_last = p2
+        client.publish(b'esp32/pir/2', b'1' if p2 else b'0')
+        print("PIR2:", "motion start" if p2 else "motion end")
+        time.sleep_ms(pir_debounce_ms)
+    #endregion
 
     time.sleep_ms(10)
     gc.collect()
