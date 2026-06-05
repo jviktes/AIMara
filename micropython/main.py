@@ -5,7 +5,7 @@ from machine import ADC
 from umqtt.simple import MQTTClient
 import ubinascii, machine, network
 
-print('Version 1.2')
+print('Version 1.6')
 
 # ══════════════════════════════════════
 # ── HARDWARE CONFIG ───────────────────
@@ -129,6 +129,7 @@ bg_color          = (200, 200, 200)
 snake_pos         = -SNAKE_LENGTH
 last_button_state = 0xFF
 config_applied = False
+ota_in_progress = False
 
 pir_debounce_ms = 500
 pir1_last = 0
@@ -142,6 +143,7 @@ MQTT_CLIENT = 'esp32-' + ubinascii.hexlify(machine.unique_id()).decode()
 DEVICE_ID    = ubinascii.hexlify(machine.unique_id()).decode()
 TOPIC_CONFIG = ('home/esp32/' + DEVICE_ID + '/config').encode()
 TOPIC_CONFIG_REQUEST = ('home/esp32/' + DEVICE_ID + '/request_config').encode()
+TOPIC_OTA = ('home/esp32/' + DEVICE_ID + '/ota').encode()
 print("DEVICE_ID:", DEVICE_ID)
 
 #region LEDS
@@ -279,6 +281,37 @@ def apply_config():
             print("LDR initialized")
         except Exception as e:
             print("LDR init failed:", e)
+
+# ── OTA update ────────────────────────
+def ota_update(url):
+    import urequests
+    print("OTA: downloading from", url)
+    try:
+        r = urequests.get(url)
+        if r.status_code == 200:
+            print("OTA: download OK, saving...")
+            f = open('main_new.py', 'w')
+            f.write(r.text)
+            f.close()
+            r.close()
+            # Rename files
+            import os
+            try:
+                os.remove('main_old.py')
+            except:
+                pass
+            os.rename('main.py', 'main_old.py')
+            os.rename('main_new.py', 'main.py')
+            # ── Clear OTA trigger so it doesn't loop ──
+            client.publish(TOPIC_OTA, b'', retain=True)  # ← clear retained
+            print("OTA: success! rebooting...")
+            time.sleep(2)
+            machine.reset()
+        else:
+            print("OTA: HTTP error", r.status_code)
+            r.close()
+    except Exception as e:
+        print("OTA: failed:", e)
 
 # ── MQTT callback ─────────────────────
 
@@ -450,6 +483,20 @@ def on_message(topic, msg):
                 bg_color = color
         return
 
+    # ── OTA update ─────────────────────
+    # Topic: home/esp32/<id>/ota
+    # Payload: http://192.168.0.x:1880/firmware/main.py
+    if topic == TOPIC_OTA:
+            global ota_in_progress
+            if ota_in_progress:
+                print("OTA already in progress, ignoring")
+                return
+            ota_in_progress = True
+            url = msg.decode()
+            print("OTA triggered:", url)
+            ota_update(url)
+            return
+    
     gc.collect()
 
 # ── Main loop setup ───────────────────
@@ -479,6 +526,7 @@ def mqtt_connect():
     c.subscribe(b'home/leds/s3/+')
     c.subscribe(b'home/leds/s4/+')
     c.subscribe(b'home/leds/s5/+')
+    c.subscribe(TOPIC_OTA)
     # Request config from Node-RED
     c.publish(TOPIC_CONFIG_REQUEST, DEVICE_ID.encode())
     print("MQTT connected as:", MQTT_CLIENT)
