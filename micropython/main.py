@@ -5,7 +5,7 @@ from machine import ADC
 from umqtt.simple import MQTTClient
 import ubinascii, machine, network
 
-log('Version 2.2')
+log('Version 2.3')
 
 sync_time()
 
@@ -119,6 +119,7 @@ HCSR04_INTERVAL   = 500   # read every 500ms
 HAS_HCSR04 = False
 
 # ── State ─────────────────────────────
+MAX_BRIGHTNESS    = 64            # 0-255, default 50%
 snake_running     = False
 snake_speed       = 80
 snake_color       = (0, 255, 0)
@@ -157,9 +158,13 @@ TOPIC_SNAKE       = b'home/leds/snake'
 TOPIC_SPEED       = b'home/leds/speed'
 TOPIC_SNAKE_COLOR = b'home/leds/snakecolor'
 TOPIC_BG_COLOR    = b'home/leds/bgcolor'
+TOPIC_BRIGHTNESS  = b'home/leds/brightness'  # payload: 0-255
 
 # ── Helpers ───────────────────────────
 def set_strip(strip, r, g, b):
+    r = int(r * MAX_BRIGHTNESS // 255)
+    g = int(g * MAX_BRIGHTNESS // 255)
+    b = int(b * MAX_BRIGHTNESS // 255)
     for i in range(NUM_LEDS):
         strip[i] = (r, g, b)
     strip.write()
@@ -179,6 +184,13 @@ def parse_color(payload):
 def draw_snake(position):
     sr, sg, sb   = snake_color
     br, bg_b, bb = bg_color
+    # Apply brightness
+    sr = int(sr * MAX_BRIGHTNESS // 255)
+    sg = int(sg * MAX_BRIGHTNESS // 255)
+    sb = int(sb * MAX_BRIGHTNESS // 255)
+    br = int(br * MAX_BRIGHTNESS // 255)
+    bg_b = int(bg_b * MAX_BRIGHTNESS // 255)
+    bb = int(bb * MAX_BRIGHTNESS // 255)
     for strip in strips:
         for i in range(NUM_LEDS):
             dist = position - i
@@ -383,7 +395,7 @@ def ota_update(url):
 
 # ── MQTT callback ─────────────────────
 def on_message(topic, msg):
-    global snake_running, snake_speed, snake_color, bg_color, snake_pos, last_snake_move, HAS_LED_STRIPS, HAS_I2C, HAS_PIR, HAS_LDR,HAS_HCSR04
+    global snake_running, snake_speed, snake_color, bg_color, snake_pos, last_snake_move, HAS_LED_STRIPS, HAS_I2C, HAS_PIR, HAS_LDR,HAS_HCSR04,MAX_BRIGHTNESS
 
     msg = msg.strip()
     log("MQTT:", topic, msg)
@@ -551,7 +563,18 @@ def on_message(topic, msg):
             if color:
                 bg_color = color
         return
-
+    
+    # ── Brightness ─────────────────────
+    # Topic: home/leds/brightness   payload: 0-255
+    if topic == TOPIC_BRIGHTNESS:
+        if HAS_LED_STRIPS:
+            try:
+                MAX_BRIGHTNESS = max(0, min(255, int(msg.decode())))
+                log("Brightness:", MAX_BRIGHTNESS)
+            except Exception as e:
+                log("Brightness error:", e, color=CLR_RED)
+        return
+    
     # ── OTA update ─────────────────────
     # Topic: home/esp32/<id>/ota
     # Payload: http://192.168.0.x:1880/firmware/main.py
@@ -596,6 +619,7 @@ def mqtt_connect():
     c.subscribe(b'home/leds/s3/+')
     c.subscribe(b'home/leds/s4/+')
     c.subscribe(b'home/leds/s5/+')
+    c.subscribe(TOPIC_BRIGHTNESS)
     c.subscribe(TOPIC_OTA)
     c.publish(TOPIC_CONFIG_REQUEST, DEVICE_ID.encode())
     log("MQTT connected as:", MQTT_CLIENT, color=CLR_YELLOW)
